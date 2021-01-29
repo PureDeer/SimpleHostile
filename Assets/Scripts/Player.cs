@@ -12,11 +12,14 @@ namespace BL767.SimpleHostile
 
         public float speed;
         public float speedMod = 2;
+        public float slideMod;
         public float jumpForce = 400;
+        public float lengthOfSlide;
         public int max_health;
 
         public Camera normalCam;
         public GameObject cameraParent;
+
         public Transform weaponParent;
 
         public Transform groundDetector;
@@ -24,6 +27,7 @@ namespace BL767.SimpleHostile
 
         private Vector3 weapPareOriPos;
         private Vector3 targetWeaBobPos;
+        private Vector3 weaPareCurPos;
 
         private int cur_health;
         private Transform ui_HPbar;
@@ -32,7 +36,9 @@ namespace BL767.SimpleHostile
         private float idleCounter;
         private float movementCounter;
         private Rigidbody rig;
+
         private float baseFOV;
+        private Vector3 originCamPos;
         private readonly float sprintFOVMod = 1.4f;
 
         private Weapon weapon;
@@ -40,6 +46,7 @@ namespace BL767.SimpleHostile
 
         private bool sliding;
         private float slideTime;
+        private Vector3 slideDir;
 
         /*
          封装motion的中间数据和判断
@@ -63,6 +70,8 @@ namespace BL767.SimpleHostile
 
             // 原始状态的视野宽度
             baseFOV = normalCam.fieldOfView;
+            // 保存人物摄像机原始位置
+            originCamPos = normalCam.transform.localPosition;
 
             // 关闭全局摄像机
             if (Camera.main) Camera.main.enabled = false;
@@ -71,6 +80,7 @@ namespace BL767.SimpleHostile
             // 记住武器原始位置
             // weapon跟Player挂载在同一个物件上
             weapPareOriPos = weaponParent.localPosition;
+            weaPareCurPos = weapPareOriPos;
             weapon = GetComponent<Weapon>();
 
             // 寻找Manager物件，获得挂载的Manager脚本
@@ -94,32 +104,32 @@ namespace BL767.SimpleHostile
             if (Input.GetKeyDown(KeyCode.U)) TakeDamage(25);
             // 通过photonView判断是否是本人操控
             if (!photonView.IsMine) return;
-            /*
-             Axles
-             */
+
+            #region Axles
 
             float _hMove = Input.GetAxisRaw("Horizontal");
             float _vMove = Input.GetAxisRaw("Vertical");
 
-            /*
-             Controls
-             */
+            #endregion Axles
+
+            #region Controls
 
             // 判断奔跑，并且限制后退的状况下不可奔跑
             bool _sprint = Input.GetKey(KeyCode.LeftShift);
             bool _jump = Input.GetKeyDown(KeyCode.Space);
             bool _slide = Input.GetKey(KeyCode.C);
 
-            /*
-             States
-             */
+            #endregion Controls
+
+            #region States
+
             // 使用射线判断是否在地上
             // 从transform原点开始，朝着场景中的所有碰撞体，沿点方向，投射一个长度为maxDistance的射线
             // 提供layermask过滤掉不想碰撞的object
             isGrounded = Physics.Raycast(groundDetector.position, Vector3.down, 0.1f, ground);
             isJumping = _jump && isGrounded;
             isSprinting = _sprint && _vMove > 0 && !isJumping && isGrounded;
-            isSliding = isSprinting && _slide;
+            isSliding = isSprinting && _slide && !isSliding;
 
             // jumping
             // 向刚体施加向上的力
@@ -128,7 +138,11 @@ namespace BL767.SimpleHostile
 
             // HeadBobbing
             // 1.Idle head Bobbing; 2.Motion Head Bobbing
-            if (_hMove == 0 && _vMove == 0)
+            if (isSliding)
+            {
+                print("donothing");
+            }
+            else if (_hMove == 0 && _vMove == 0)
             {
                 HeadBob(idleCounter, 0.03f, 0.03f);
                 idleCounter += Time.deltaTime;
@@ -147,6 +161,8 @@ namespace BL767.SimpleHostile
                 weaponParent.localPosition = Vector3.Slerp(weaponParent.localPosition, targetWeaBobPos, Time.deltaTime * 6.0f);
             }
 
+            #endregion States
+
             RefreshHPbar();
             weapon.RefreshAmmo(ui_ammo);
         }
@@ -158,42 +174,77 @@ namespace BL767.SimpleHostile
         private void FixedUpdate()
         {
             if (!photonView.IsMine) return;
-            /*
-             Axles
-             */
+
+            #region Axles
 
             float _hMove = Input.GetAxisRaw("Horizontal");
             float _vMove = Input.GetAxisRaw("Vertical");
 
-            /*
-             Movement
-             */
+            #endregion Axles
 
-            // 方向向量
-            Vector3 _direction = new Vector3(_hMove, 0, _vMove);
-            // 如果同时按下W和D，那么让向量长度仍然为1而不是根号2
-            _direction.Normalize();
+            #region Movement
 
+            Vector3 _direction;
             float _adjSpeed = speed;
-            // 跑动时候禁止瞄准
-            if (Input.GetMouseButton(1) && isSprinting) weapon.Aim(false);
-            _adjSpeed *= isSprinting ? speedMod : 1;
+
+            if (!sliding)
+            {
+                // 方向向量
+                _direction = new Vector3(_hMove, 0, _vMove);
+                // 如果同时按下W和D，那么让向量长度仍然为1而不是根号2
+                _direction.Normalize();
+                _direction = transform.TransformDirection(_direction);
+
+                // 跑动时候禁止瞄准
+                if (Input.GetMouseButton(1) && isSprinting) weapon.Aim(false);
+                if (isSprinting) _adjSpeed *= speedMod;
+            }
+            else
+            {
+                // 当进入滑行状态时，刚体运动方向就是滑行方向，且滑行时间逐渐减少
+                _direction = slideDir;
+                _adjSpeed *= slideMod;
+                slideTime -= Time.fixedDeltaTime;
+                if (slideTime <= 0)
+                {
+                    sliding = false;
+                    weaPareCurPos += Vector3.up * 0.1f;
+                    print(weaPareCurPos);
+                }
+            }
 
             // 缓存向量；将刚体的速度向量从本地空间转到全局空间, 避免刚体移动的方向和摄像机(鼠标控制的摄像)的方向不相同
-            Vector3 _targetVelocity = transform.TransformDirection(_direction) * _adjSpeed * Time.fixedDeltaTime;
+            Vector3 _targetVelocity = _direction * _adjSpeed * Time.fixedDeltaTime;
             // 将缓存向量的垂直轴向量设为刚体在跳跃时被施加的向上的力的向量，然后将缓存向量设为刚体最终的移动向量
             _targetVelocity.y = rig.velocity.y;
             // 将刚体的最终运动向量设为缓存向量
             rig.velocity = _targetVelocity;
 
-            /*
-             Field of View
-             */
+            // sliding以及FOV
+            if (isSliding)
+            {
+                sliding = true;
+                slideDir = _direction;
+                slideTime = lengthOfSlide;
+                // 调整像机高度
+                weaPareCurPos += Vector3.down * 0.1f;
+            }
 
-            // 给奔跑加上视野加宽效果，使用Lerp线性插值
-            normalCam.fieldOfView = isSprinting ?
-                    Mathf.Lerp(normalCam.fieldOfView, baseFOV * sprintFOVMod, Time.fixedDeltaTime * 8) :
-                    Mathf.Lerp(normalCam.fieldOfView, baseFOV, Time.fixedDeltaTime * 8);
+            if (sliding)
+            {
+                // 给奔跑加上视野加宽效果，使用Lerp线性插值
+                normalCam.fieldOfView = Mathf.Lerp(normalCam.fieldOfView, baseFOV * sprintFOVMod * 1.25f, Time.fixedDeltaTime * 8f);
+                normalCam.transform.localPosition = Vector3.Lerp(normalCam.transform.localPosition, originCamPos + Vector3.down * 0.5f, Time.fixedDeltaTime * 6f);
+            }
+            else
+            {
+                if (isSprinting) Mathf.Lerp(normalCam.fieldOfView, baseFOV * sprintFOVMod, Time.fixedDeltaTime * 8f);
+                else Mathf.Lerp(normalCam.fieldOfView, baseFOV, Time.fixedDeltaTime * 8f);
+
+                normalCam.transform.localPosition = Vector3.Lerp(normalCam.transform.localPosition, originCamPos, Time.fixedDeltaTime * 6f);
+            }
+
+            #endregion Movement
         }
 
         #endregion MonoBehaviour Callbacks
@@ -208,7 +259,7 @@ namespace BL767.SimpleHostile
         /// <param name="p_y_intensity">y缓动系数</param>
         private void HeadBob(float angle, float p_x_intensity, float p_y_intensity)
         {
-            targetWeaBobPos = weapPareOriPos + new Vector3(Mathf.Cos(angle) * p_x_intensity, Mathf.Sin(angle * 2) * p_y_intensity, 0);
+            targetWeaBobPos = weaPareCurPos + new Vector3(Mathf.Cos(angle) * p_x_intensity, Mathf.Sin(angle * 2) * p_y_intensity, 0);
         }
 
         private void RefreshHPbar()

@@ -310,7 +310,9 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   speed: 300
   speedMod: 2
+  slideMod: 2.5
   jumpForce: 600
+  lengthOfSlide: 1.5
   max_health: 100
   normalCam: {fileID: 712957217816528444}
   cameraParent: {fileID: 712957217409652364}
