@@ -208,6 +208,7 @@ namespace BL767.SimpleHostile
                 if (slideTime <= 0)
                 {
                     sliding = false;
+                    // 这里有Bug，每次sliding结束后，武器不会返回原来的位置。。需要修改
                     weaPareCurPos += Vector3.up * 0.1f;
                     print(weaPareCurPos);
                 }
